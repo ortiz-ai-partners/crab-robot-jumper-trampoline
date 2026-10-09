@@ -10,12 +10,12 @@ landing through the bed's compression, push from the bottom of the stroke, and
 go higher each time. Everything here is simulation for now. The robot is the
 prize.
 
-**Status (2026-10-09 night): stage 0 done; a hand-written reflex layer already bounces on the deep bed; stage 1 written and launchable, not yet trained.**
+**Status (2026-10-09, late night): stage 0 done; hand-written controllers bounce on the deep bed and pass 30 cm, but fall 3 or 4 times in 15 s; stage 1 written and launchable, not yet trained.**
 
 | stage | what | state |
 |---|---|---|
 | 0 | a trampoline bed scene; the shipped jump replayed on it; measurements of landing force, slip and torque; recordings | done |
-| 0.5 | no learning: the shipped posture policy driven by hand-written reflexes (push on the sign of the vertical speed, swing the high side's legs in the air, thrust the arms on the push, counter the yaw) keeps bouncing on the deep bed | done: 8 to 9 cm for 12 s without a fall; up to 31 cm with falls |
+| 0.5 | no learning: the shipped posture policy driven by hand-written reflexes, then a fully scripted "gymnast" with no policy at all (all six legs flex and push together from the bottom of the stroke, arms thrust, air righting, yaw reflex) | done: 8 to 9 cm for 12 s without a fall; past 30 cm once or twice in 15 s, with 3 or 4 falls |
 | 1 | `jumper.bounce`: a reinforcement-learning task that keeps bouncing, paid per bounce for the apex and its growth | written, launches on CPU, **untrained** |
 | 2 | air poses, a somersault (front or side), skipping rope | planned |
 | 3 | the real robot on a real bed, once we have one | planned |
@@ -32,7 +32,7 @@ redistributed.
 | `tools/calibrate_bed.py` | drops a 2.5 kg stand-in on candidate beds and reports sink and restitution; turns a measured real bed into the dials |
 | `docs/measurement.md` | how to measure a real bed with a weight, a ruler and a phone |
 | `tasks/jumper/bounce/` | stage 1: the bouncing task, built on the toolkit's `jumper.ref_free_jump` |
-| `tools/probes/` | the one-off probes and recording scripts, all wrapping the toolkit's `scripts/play.py`: `probe_terminations.py` and `probe_slip.py` (stage 0: terminations, foot slip, ground force), `probe_drop.py` (drop tests and the "arrow" at touchdown), `probe_bounce_dance.py` (a sine wave on the posture policy's height command), `probe_reflex_bounce*.py` (the reflex layer, versions 2 to 4), `probe_air_reaction.py` and `probe_lift_calib2.py` (which way the body turns when a leg swings in the air), `render_sim.py` (draws a replay in simulation time, portrait 1080 x 1920, with a mask of the robot), `play_camera.py`, `record_play.ps1`, `repeat_probe.ps1`. Each names its jumper checkout in a `REPO` constant at the top; change it to yours |
+| `tools/probes/` | the one-off probes and recording scripts, all wrapping the toolkit's `scripts/play.py`: `probe_terminations.py` and `probe_slip.py` (stage 0: terminations, foot slip, ground force), `probe_drop.py` (drop tests and the "arrow" at touchdown), `probe_bounce_dance.py` (a sine wave on the posture policy's height command), `probe_reflex_bounce*.py` (the reflex layer, versions 2 to 4), `probe_air_reaction.py` and `probe_lift_calib2.py` (which way the body turns when a leg swings in the air), `probe_squat.py` (all six legs flexing in phase, no policy), `probe_gymnast.py` and `probe_gymnast_v2.py` (the scripted gymnast; v2 adds raising both claws when the nose drops), `render_sim.py` (draws a replay in simulation time, portrait 1080 x 1920, with a mask of the robot; `--slow 3` for a third of real speed), `play_camera.py`, `record_play.ps1`, `repeat_probe.ps1`. Each names its jumper checkout in a `REPO` constant at the top; change it to yours. Three later versions used for the numbers below are not here yet: the reflex layer's v6 (yaw reflex, leg sync) and the gymnast's v3 (`--resettle`) and v4 (`--legacy-no-reset`) |
 | `tools/install_into_jumper.py` | copies the scene, the calibration tool and the task into a jumper checkout and adds the two registration lines |
 
 ## Use it
@@ -110,6 +110,21 @@ give.
 
 The first attempt at the push, a state machine that crouched from rest and pushed, never left the ground: the push has to come at the bottom of a *moving* body. Every take-off on the deep bed carries about 0.4 m/s of forward speed into the landing (0.05 on rigid ground); the falls are the landings that arrive tilting and turning. Those are the things stage 1 is asked to learn, and the heights are its bar.
 
+**No policy at all: the scripted gymnast** (`tools/probes/probe_squat.py`, `probe_gymnast*.py`; deep bed, from standstill, 15 s runs). The coach looked at the policy's bounce and asked whether the legs were really moving together. They were not: the left and right legs of a pair correlate at only 0.6 to 0.75, and the front arms move *against* the middle and rear legs (correlation −0.6 to −0.7), a see-saw rather than a squat. A script that bends and extends all six legs in phase, from the hip, with no policy:
+
+| coach's cue, in order | what the script does | result (15 s) |
+|---|---|---|
+| all legs bend at the same time | knee and hip of all six legs on one sine wave | bounces from standstill; 10 to 13 cm at 3.4 Hz, 18 cm with deeper knees; 2 to 13 falls. With the hip moved only half as far, it does not leave the bed |
+| "30 cm, five times running" | push from the bottom on the vertical speed (a little before it, to cover the servo's lag), arms thrust, air righting, yaw reflex, knees bent and stiff for the landing | best mean 16.6 cm, best hop 26 cm, 20 cm passed 6 times; 6 to 9 falls. Not reached |
+| "when the nose drops, raise both hands" | raise both claws, elbows straight, when the nose is 6 degrees down | the landing holds no better, the jump goes higher: up to 34 cm, 30 cm passed twice running |
+| "triple the friction" | bed friction 1.8 to 3.6 and 5.4 | no fewer falls and lower jumps; the feet grip, the push goes into the legs. Kept at 1.8 |
+
+With the script fixed to settle for 0.5 s after a fall (before the fix it kept pushing and chained falls), the honest figure on the default bed is 3 or 4 falls in 15 s, with 30 cm passed in some runs (best hop 34.7 cm).
+
+Why 30 cm does not come every time: holding it takes about 1.4 J per bounce (2.543 kg × 9.81 × 0.30 m × the 19 % the bed loses), which the servos can supply. What they lack is stiffness: at the PD gain the script runs at (kp 20) the push goes into the legs' own give and the bed is past its bottom before it arrives. Pushing *before* the bottom helped more than anything else. The one 30.8 cm hop the policy made came when it commanded a large target early, which makes a leg effectively stiff. A trained policy can do that on every bounce; stage 1 needs no change for it.
+
+The video takes the coach chose for the first entry are the failures and the luck: a run that falls on almost every bounce, and one that passes 30 cm five times, both shot in the script's old mode that keeps pushing after a fall, the second on a bed with twice the default friction. They are shown as what they are.
+
 **The recording fed forward with no policy** (the toolkit's `high_jump_flat.npz`,
 8 environments, domain randomisation on): rises 0.10 to 0.13 m on rigid ground,
 0.06 m on the shallow bed, 0.02 to 0.06 m on the deep bed, where 2 or 3 of 8
@@ -164,7 +179,8 @@ Entry for the Crab Robot Open-source Challenge 2026: #Jumper #CrabRobot #OpenSou
 - `scenes/trampoline.py`：跳ねる床。`--bed-dampratio` が跳ね、`--bed-timeconst` が沈み
 - `tools/calibrate_bed.py` と `docs/measurement.md`：本物のベッドを重りと定規とスマホで測り、ダイヤルに変換する
 - `tasks/jumper/bounce/`：段階1「漕いで跳ね続ける」学習課題。書き上げて発車確認済み、未学習
-- `tools/probes/`：計測・反射・描画の道具。学習なしの手書き反射（底の少し前で押す、空中で上がった側の脚を付け根から振る、押しで腕を突き出す、ヨーを打ち消す）で、深い床を 8〜9 cm で転ばず跳ね続け、最大 31 cm に届いた（転倒あり）。`render_sim.py` はシミュレーション時間で縦動画とマスクを描く
+- `tools/probes/`：計測・反射・描画の道具。学習なしの手書き反射（底の少し前で押す、空中で上がった側の脚を付け根から振る、押しで腕を突き出す、ヨーを打ち消す）で、深い床を 8〜9 cm で転ばず跳ね続けた。ポリシーを使わない台本「体操選手」（6本の脚を同時に屈伸）では 30 cm を越え始めた（最高 34.7 cm）が、15秒に 3〜4回転ぶ。`render_sim.py` はシミュレーション時間で縦動画とマスクを描く（`--slow 3` で 1/3 速）
+- 30 cm が安定しない理由：押した力が脚のたわみ（PD の硬さ kp 20）に吸われ、床に伝わる前に底を過ぎる。学習するポリシーは先回りで大きく関節を動かせるので、段階1で解ける見込み
 - `tools/install_into_jumper.py`：本家のチェックアウトに上書きして登録行を足す
 
 段階0の数字（公式ジャンプを床で再生）：着地の接地力は硬い床の 90〜220 N に対し、深い床で 22〜54 N。4分の1になる。深い床では9回中3回、二回目のバウンスで転ぶ。摩擦を上げても滑りは直らない。

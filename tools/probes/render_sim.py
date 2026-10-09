@@ -6,7 +6,7 @@ second mp4 that is the robot's mask (white robot on black), for cutting the back
 Works two ways:
 
 1. On its own, around scripts/play.py:
-       python render_sim.py --out clip.mp4 [--fps 30 --size 1080x1920 --dist 1.2 --elev -18 --azim 135 --no-mask] -- <play.py arguments, with --headless>
+       python render_sim.py --out clip.mp4 [--fps 30 --size 1080x1920 --dist 1.2 --elev -18 --azim 135 --slow 3 --no-mask] -- <play.py arguments, with --headless>
 
 2. As a module, on top of another probe that has already replaced `play._loop`:
        import render_sim; render_sim.install(play, "clip.mp4", ...)
@@ -28,7 +28,14 @@ import sys
 REPO = r"D:\IslandMaster\jumper"
 
 
-def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 135.0), mask=True):
+def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 135.0), mask=True,
+            slow=1.0):
+    # `slow`: draw one frame every 1/(fps*slow) s of simulation time and play them at
+    # `fps`, so slow=3 is a third of real speed (the Island Master's second version,
+    # 2026-10-09, as its notes describe it; the copy attached to Notion was the first
+    # version, so this argument was written back in from that description).
+    if slow <= 0:
+        raise ValueError(f"slow must be positive, got {slow}")
     inner_loop = play._loop
 
     def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, monitor=None):
@@ -71,7 +78,9 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
                                                       quality=8, macro_block_size=1, ffmpeg_log_level="error")
             mask_writer.send(None)
         state = {"step": 0, "frames": 0, "next": 0.0}
-        print(f"[render] {width}x{height} @ {fps} fps of simulation time -> {out_path}"
+        frame_dt = 1.0 / (fps * slow)
+        speed_note = f", {slow:g}x slow" if slow != 1.0 else ""
+        print(f"[render] {width}x{height} @ {fps} fps of simulation time{speed_note} -> {out_path}"
               f"{' (+ mask)' if mask else ''}; camera distance {cam[0]} elevation {cam[1]} azimuth {cam[2]}")
 
         def draw():
@@ -99,11 +108,11 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
             t = state["step"] * dt
             while t >= state["next"] - 1e-9:
                 draw()
-                state["next"] += 1.0 / fps
+                state["next"] += frame_dt
             return out
 
         draw()                      # frame 0, the starting pose
-        state["next"] = 1.0 / fps
+        state["next"] = frame_dt
         env.step = step
         try:
             return inner_loop(env, policy, viewer, max_steps, speed, readout, monitor)
@@ -112,8 +121,8 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
             writer.close()
             if mask_writer is not None:
                 mask_writer.close()
-            print(f"\n[render] {state['frames']} frames = {state['frames'] / fps:.2f} s of simulation "
-                  f"({state['step']} control steps) -> {out_path}")
+            print(f"\n[render] {state['frames']} frames = {state['frames'] * frame_dt:.2f} s of simulation, "
+                  f"{state['frames'] / fps:.2f} s of video ({state['step']} control steps) -> {out_path}")
 
     play._loop = _loop
 
@@ -134,11 +143,12 @@ def _main():
     w, h = (int(x) for x in size.lower().split("x"))
     cam = (opt("--dist", 1.2), opt("--elev", -18.0), opt("--azim", 135.0))
     mask = "--no-mask" not in mine
+    slow = opt("--slow", 1.0)
 
     os.chdir(REPO)
     sys.path.insert(0, os.path.join(REPO, "scripts"))
     import play
-    install(play, out, fps=fps, width=w, height=h, cam=cam, mask=mask)
+    install(play, out, fps=fps, width=w, height=h, cam=cam, mask=mask, slow=slow)
     sys.argv = [os.path.join(REPO, "scripts", "play.py"), *theirs]
     play.main()
 
