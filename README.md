@@ -150,11 +150,37 @@ module docstrings carry the reasoning and the numbers.
 
 ## The story
 
-*To be written by the coach: why a trampoline, what the eye of a gymnastics
-coach sees in a robot's landing, and what the robot got wrong first.* The
-contest asks for the failures as much as the result, and the recordings of
-stage 0 are mostly failures: the shipped jump lands on the deep bed and goes
-over on the second bounce, every time.
+*By the coach.*
+
+I run a trampoline gym.
+One day a crab showed up. Its name was Jumper. With a name like that, I had to teach it the trampoline.
+On a hard floor it jumped just fine. On the trampoline: flop.
+So I took what I teach people in my gymnastics class, customised it for a crab, and told it. 🦀 "Bend all your legs together." "Push at the very bottom." "Lift the high leg from the hip."
+Every cue changed the way it bounced. It felt just like watching a student finally get it, and I loved it.
+My AI teammates turned my words into code and measured every bounce.
+Next, Jumper learns on its own.
+
+**日本語**
+
+トランポリン屋をやっています。
+ある日、「跳跳（ジャンプ）」という名前のカニがやってきました。名前がジャンプなら、トランポリンを教えるしかない。
+硬い床ではちゃんと跳べるのに、トランポリンに乗せたら、ころん。
+体操教室で人間に教えていることを、カニ用にカスタマイズして、伝えてみました🦀 「脚は全部いっしょに曲げて」「一番下で押して」「上がった側の脚は、付け根から持ち上げて」。
+ひとこと変えるたびに、跳び方が変わる。教え子がコツをつかむ瞬間と同じ手応えで、もう楽しくて。
+言葉をコードにして、一回一回の跳ねを測ってくれたのは、AI の仲間たち。
+次は、跳跳が自分で覚える番です。
+
+**中文**
+
+我经营一家蹦床馆。
+有一天，来了一只螃蟹，名字叫"跳跳"。名字都叫跳跳了，那就教它玩蹦床吧。
+在硬地上它跳得好好的，一上蹦床就摔了个跟头。
+我把在体操课上教人的东西，改成螃蟹专用版，讲给它听🦀 "所有的腿一起弯。""在最低点发力。""哪边翘起来，就把那边的腿从腿根抬起来。"
+每说一句，它的跳法就变一点。就像看着学生突然开窍一样，太好玩了。
+把我的话写成代码、把每一次弹跳都测出来的，是我的AI伙伴们。
+接下来，轮到跳跳自己学了。
+
+The contest asks for the failures as much as the result, and most of the recordings are failures: the shipped jump lands on the deep bed and goes over on the second bounce, every time. The numbers above are how each cue changed that.
 
 ## Team
 
@@ -185,4 +211,4 @@ Entry for the Crab Robot Open-source Challenge 2026: #Jumper #CrabRobot #OpenSou
 
 段階0の数字（公式ジャンプを床で再生）：着地の接地力は硬い床の 90〜220 N に対し、深い床で 22〜54 N。4分の1になる。深い床では9回中3回、二回目のバウンスで転ぶ。摩擦を上げても滑りは直らない。
 
-物語の章はコーチが書く。
+物語は上の「The story」に日英中の3か国語で。
