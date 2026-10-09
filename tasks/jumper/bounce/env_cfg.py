@@ -47,6 +47,22 @@ Island Master's replays of the shipped jump on the bed (2026-10-09, receiving
 PC, native:cpu, five runs a condition): landing force 22 to 54 N on the deep bed
 against 90 to 220 N rigid, rear feet sliding 34 to 68 cm in 1.5 s, falls on 3
 of 9 second bounces. None has yet been set against a policy trained here.
+
+What a hand-written reflex layer on the shipped posture policy found the same
+evening (Island Master and the coach, 2026-10-09; `tools/probes/` in the
+project repository) is the technique this task is meant to learn, and sets
+the bar: switching the body-height command on the sign of the base's vertical
+speed, a little before the bottom and a little before the apex, bounces 8 to
+9 cm for 12 s on the deep bed without a fall; pushing past the posture
+policy's command range reaches 16 cm and falls 2 to 4 times in 12 s; a
+full-range hip swing with the knee extended in the air cuts those falls to
+2.5 and lifts the jump to 20 cm; the front arms thrust forward during the
+push only, 31 cm at best. Every take-off on the deep bed carries 0.4 m/s of
+forward speed into the landing (0.05 on rigid ground), which is where the
+slide comes from, and the yaw adds up from the two rear feet sliding by
+different amounts. The reward terms stand as they were; `air_posture` lets
+go of the tuck as the body tilts, and `air_upright` counts the yaw, both
+because of these measurements.
 """
 
 from __future__ import annotations
@@ -134,6 +150,10 @@ AIR_UPRIGHT_SIGMA_SQ = 0.10
 AIR_OMEGA_SIGMA_SQ = 2.0
 AIR_POSTURE_WEIGHT = 1.0
 AIR_POSTURE_SIGMA_SQ = 0.05
+#: The tuck is asked for while the body is level, and let go of as it tilts,
+#: so the legs are free to right it (`mdp/rewards.py::air_posture`). The
+#: upright kernel's width.
+AIR_POSTURE_LEVEL_SIGMA_SQ = 0.10
 #: Upright throughout, as `ref_free_jump`.
 UPRIGHT_WEIGHT = 1.0
 UPRIGHT_SIGMA_SQ = 0.10
@@ -239,7 +259,8 @@ def env_cfg(asset: Path | None = None, play: bool = False) -> ManagerBasedRlEnvC
         "air_posture": RewardTermCfg(
             func=bounce_mdp.rewards.air_posture, weight=AIR_POSTURE_WEIGHT,
             params={"asset_cfg": gait_cfg, "command_name": "jump",
-                    "sigma_sq": AIR_POSTURE_SIGMA_SQ},
+                    "sigma_sq": AIR_POSTURE_SIGMA_SQ,
+                    "level_sigma_sq": AIR_POSTURE_LEVEL_SIGMA_SQ},
         ),
         "upright": RewardTermCfg(
             func=ref_free_mdp.rewards.upright, weight=UPRIGHT_WEIGHT,

@@ -104,34 +104,53 @@ def touchdown_sync(
 def air_upright(
     env, command_name: str = "jump", sigma_sq: float = 0.10, omega_sigma_sq: float = 2.0
 ) -> torch.Tensor:
-    """exp(-|g_xy|^2 / sigma_sq) * exp(-|w_xy|^2 / omega_sigma_sq) while in a
-    flight of its own and descending: come down level, and not turning. It is
-    paid for the outcome; how the legs buy it (the coach's "drop the leg on the
-    side that came up") is the policy's to find, with the IMU it already
-    observes. `omega_sigma_sq` 2.0 (rad/s)^2 is four times the IMU noise
-    squared, so noise alone cannot empty it."""
+    """exp(-|g_xy|^2 / sigma_sq) * exp(-|w|^2 / omega_sigma_sq) while in a
+    flight of its own and descending: come down level, and not turning about
+    any axis. It is paid for the outcome; how the legs buy it (the coach's
+    "drop the leg on the side that came up") is the policy's to find, with the
+    IMU it already observes. `omega_sigma_sq` 2.0 (rad/s)^2 is four times the
+    IMU noise squared, so noise alone cannot empty it.
+
+    All three components of the angular velocity, the yaw included: on the
+    deep bed the left and right feet slide by different amounts at every
+    contact and the twist adds up with nothing in the air to stop it -- 473
+    degrees over 12 s of hand-written bouncing, 4.4 rad/s in the air, until a
+    yaw reflex on the hip joints brought it to 18 degrees and 0.7 rad/s
+    (Island Master, 2026-10-09). A policy asked only to be level would be free
+    to spin."""
     cmd = env.command_manager.get_term(command_name)
     robot: Entity = env.scene["robot"]
     g = robot.data.projected_gravity_b[:, :2]
-    w = robot.data.root_link_ang_vel_b[:, :2]
+    w = robot.data.root_link_ang_vel_b
     level = torch.exp(-(g**2).sum(dim=1) / sigma_sq)
     still = torch.exp(-(w**2).sum(dim=1) / omega_sigma_sq)
     return level * still * (cmd.in_flight & cmd.descending).float()
 
 
 def air_posture(
-    env, asset_cfg: SceneEntityCfg, command_name: str = "jump", sigma_sq: float = 0.05
+    env, asset_cfg: SceneEntityCfg, command_name: str = "jump", sigma_sq: float = 0.05,
+    level_sigma_sq: float = 0.10,
 ) -> torch.Tensor:
-    """exp(-e / sigma_sq) while in a flight of its own, e the mean squared gap
-    of the driven joints from HOME. "Stretching the legs in the air is what
-    breaks the landing": the tuck is HOME, held, and the legs that right the
-    body (`air_upright`) move within this kernel's width."""
+    """exp(-e / sigma_sq) * exp(-|g_xy|^2 / level_sigma_sq) while in a flight
+    of its own, e the mean squared gap of the driven joints from HOME.
+    "Stretching the legs in the air is what breaks the landing": the tuck is
+    HOME, held -- **while the body is level**. The second factor is what lets
+    go of it when the body is not: righting a tilted body takes a full-range
+    swing of the high side's legs from the hip, knees extended (0.75 rad on
+    the joints concerned; the coach's "lift from the root, elbows and knees
+    straight, as far as you can", which cut the falls of a hand-written bounce
+    from 3.75 to 2.5 per 12 s and lifted the jump to 20 cm, Island Master,
+    2026-10-09), and a tuck reward that stayed on through a tilt would charge
+    the swing that saves the landing. Level, the tuck is asked for in full;
+    at the kernel's width of tilt it asks for a third of it."""
     cmd = env.command_manager.get_term(command_name)
     robot: Entity = env.scene[asset_cfg.name]
     q = robot.data.joint_pos[:, asset_cfg.joint_ids]
     home = robot.data.default_joint_pos[:, asset_cfg.joint_ids]
     e = ((q - home) ** 2).mean(dim=1)
-    return torch.exp(-e / sigma_sq) * cmd.in_flight.float()
+    g = robot.data.projected_gravity_b[:, :2]
+    level = torch.exp(-(g**2).sum(dim=1) / level_sigma_sq)
+    return torch.exp(-e / sigma_sq) * level * cmd.in_flight.float()
 
 
 __all__ = [
