@@ -169,6 +169,12 @@ def summary() -> None:
         print(f"[probe] log -> {out_path}")
 
 
+RENDER = opt("--render", os.environ.get("DANCE_RENDER") or None, str)
+if RENDER:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import render_sim
+    render_sim.install(play, RENDER, fps=int(opt("--fps", 30, int)),
+                       cam=CAM or (1.2, -18.0, 135.0), mask="--no-mask" not in mine)
 sys.argv = [os.path.join(REPO, "scripts", "play.py"), *theirs]
 try:
     play.main()

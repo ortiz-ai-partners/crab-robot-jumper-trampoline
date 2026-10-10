@@ -16,7 +16,13 @@ import sys
 REPO = r"D:\IslandMaster\jumper"
 LIFT = {"LF": (1, -1.0), "RF": (5, -1.0), "LM": (9, +1.0), "RM": (12, -1.0), "LR": (15, +1.0), "RR": (18, -1.0)}
 GROUPS = {"front": ("LF", "RF"), "rear": ("LR", "RR"), "left": ("LF", "LM", "LR"), "right": ("RF", "RM", "RR"),
-          "mid": ("LM", "RM"), "none": ()}
+          "mid": ("LM", "RM"), "none": (), "yaw_mirror": ("LF", "RF", "LM", "RM", "LR", "RR"),
+          "yaw_same": ("LF", "RF", "LM", "RM", "LR", "RR")}
+# For the yaw tests the HIP YAW joint J0 is swung instead of J1 ("横振り" is the right tool for yaw).
+# yaw_mirror: left legs +, right legs - (mirrored, so every leg sweeps the same way around the body);
+# yaw_same: every J0 +.
+J0 = {"LF": 0, "RF": 4, "LM": 8, "RM": 11, "LR": 14, "RR": 17}
+J0_SIGN_MIRROR = {"LF": +1.0, "RF": -1.0, "LM": +1.0, "RM": -1.0, "LR": +1.0, "RR": -1.0}
 
 if "--" in sys.argv:
     cut = sys.argv.index("--")
@@ -72,6 +78,10 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
         act = torch.zeros_like(policy(obs))
         if T0 <= t < T1:
             for leg in legs:
+                if LIMBS.startswith("yaw"):
+                    s = J0_SIGN_MIRROR[leg] if LIMBS == "yaw_mirror" else 1.0
+                    act[0, J0[leg]] = s * AMP
+                    continue
                 idx, sgn = LIFT[leg]
                 act[0, idx] = sgn * AMP
                 if EXTEND:
@@ -82,18 +92,23 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
         g = robot.data.projected_gravity_b[0].tolist()
         w = robot.data.root_link_ang_vel_b[0].tolist()
         z = float(robot.data.root_link_pos_w[0, 2])
+        q = robot.data.root_link_quat_w[0].tolist()
+        import math as _m
+        yaw = _m.degrees(_m.atan2(2.0 * (q[0] * q[3] + q[1] * q[2]), 1.0 - 2.0 * (q[2] * q[2] + q[3] * q[3])))
         feet = {leg: float(robot.data.body_link_pos_w[0, i, 2]) - z for leg, i in foot_idx.items()}
         for mark in (T0, T1, T1 + 0.1):
             if abs(t - mark) < dt / 2:
-                g_at[round(mark, 2)] = (g, w, z, feet)
+                g_at[round(mark, 2)] = (g, w, z, feet, yaw)
         step += 1
     k = sorted(g_at)
     print(f"[air] {'t':>5} {'gx (nose down +)':>18} {'gy (left down +)':>18} {'wx':>7} {'wy':>7} {'base z':>8}")
     for m in k:
-        g, w, z, feet = g_at[m]
-        print(f"[air] {m:>5.2f} {g[0]:>18.3f} {g[1]:>18.3f} {w[0]:>7.2f} {w[1]:>7.2f} {z:>8.3f}   feet rel. base: "
-              + ", ".join(f"{leg} {v * 100:+.1f} cm" for leg, v in feet.items()))
+        g, w, z, feet, yaw = g_at[m]
+        print(f"[air] {m:>5.2f} {g[0]:>18.3f} {g[1]:>18.3f} {w[0]:>7.2f} {w[1]:>7.2f} {z:>8.3f}   yaw {yaw:+7.1f} deg  wz {w[2]:+.2f}")
     if len(k) >= 2:
+        y0, y1 = g_at[k[0]][4], g_at[k[1]][4]
+        dy = (y1 - y0 + 540) % 360 - 180
+        print(f"[air] during the swing: yaw changed {dy:+.1f} deg (+ = counter-clockwise seen from above), wz at end {g_at[k[1]][1][2]:+.2f} rad/s")
         g0, g1 = g_at[k[0]][0], g_at[k[1]][0]
         f0, f1 = g_at[k[0]][3], g_at[k[1]][3]
         rise = ", ".join(f"{leg} {(f1[leg] - f0[leg]) * 100:+.1f} cm" for leg in f0)
