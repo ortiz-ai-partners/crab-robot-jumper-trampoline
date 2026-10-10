@@ -75,6 +75,19 @@ WAVE = "--wave" in mine            # greeting: raise the right claw after the ap
 #   flight  : replaces R1's front-arm component while airborne
 #   landing : only in the last stretch before touchdown (so the claws do not dig in; the four legs take the landing)
 NOSE_WAVE = opt("--nose-wave", "off", str)
+# the ending (the coach, 10/11: "最後の 1〜2 回の跳びで空中ずっと片手を挙げる、にっこり笑顔で"):
+#   --wave-after T : from T s on, the right claw is up for the whole of every flight (takeoff to touchdown)
+#   --finish-after T2 : the first touchdown after T2 ends the bouncing: knees held bent for --finish-hold s to
+#                       take the landing, then the standing pose; with --wave-stay the claw stays up meanwhile
+WAVE_AFTER = opt("--wave-after", float("inf"))
+FINISH_AFTER = opt("--finish-after", float("inf"))
+FINISH_HOLD = opt("--finish-hold", 0.6)
+WAVE_STAY = "--wave-stay" in mine
+# the trampolinist's "kill": while the bed pushes the body back up, fold the legs (knees and thighs) by this much
+# more, so the bed's return goes into folding legs instead of into another bounce (action units, 0 = off)
+FINISH_KILL = opt("--finish-kill", 0.0)
+FINISH_KILL_THIGH = opt("--finish-kill-thigh", 1.0)   # the thighs' share of the fold (0 = knees only: folding the
+                                                      # thighs too let the body bottom out on the bed, 10/11)
 NOSE_WAVE_G = opt("--nose-wave-g", 0.1)    # projected-gravity x above which the nose counts as low (0.1 = about 6 deg)
 RENDER = opt("--render", None, str)
 CAM = (opt("--dist", 1.2), opt("--elev", -18.0), opt("--azim", 135.0))
@@ -122,7 +135,15 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
         on_bed = F > 1.0
         landing_soon = (not on_bed) and vz < 0 and z < STAND_Z + OFF_BELOW
         # ---- phases ----
-        if phase == "STAND":
+        on_floor = bool(META.get("dropped")) and on_bed
+        if phase != "FLOOR" and on_floor:
+            phase, t_phase = "FLOOR", t                 # landed outside the circle, on the gym floor
+            print(f"[gym] landed on the stool at t={t:.2f}s")
+        if phase != "FINISH" and phase != "FLOOR" and t >= FINISH_AFTER and on_bed and phase == "DOWN":
+            phase, t_phase = "FINISH", t
+        if phase in ("FINISH", "FLOOR"):
+            pass
+        elif phase == "STAND":
             if t >= SETTLE_AT[0]:
                 phase, t_phase = "DOWN", t
         elif phase == "DOWN":
@@ -157,9 +178,55 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
             if ARMS > 0 and ARMS_DELAY <= since < ARMS_DELAY + ARMS_DUR:
                 act[0, 1] += ARMS; act[0, 5] += ARMS          # front J1 +: claws forward/down, the human arm swing
                 act[0, 2] += ARMS; act[0, 6] -= ARMS          # elbows straight
-        elif phase == "DOWN":
+        elif phase == "DOWN" or (phase == "FINISH" and t - t_phase < FINISH_HOLD) or                 (phase == "FLOOR" and t - t_phase < FLOOR_HOLD):
             for leg, (j, s) in KNEE_EXT.items():
                 act[0, j] -= s * FLEX                         # knees bent, held (stiff by the PD)
+        if phase == "FINISH" and LAUNCH_LEAN and t >= LAUNCH_AT - 0.25 and not META.get("launched")                 and not META.get("launching") and on_bed and vz <= VZ_UP:
+            q = robot.data.root_link_quat_w[0]
+            qw, qx, qy, qz = (float(v) for v in q)
+            yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+            ox_ = float(robot.data.root_link_pos_w[0, 0]) - _rb_cx; oy_ = float(robot.data.root_link_pos_w[0, 1]) - _rb_cy
+            nrm = math.hypot(ox_, oy_) or 1.0
+            obx = (math.cos(yaw) * ox_ + math.sin(yaw) * oy_) / nrm
+            oby = (-math.sin(yaw) * ox_ + math.cos(yaw) * oy_) / nrm
+            for leg, (j, sg) in KNEE_EXT.items():
+                w = _HIP[leg][0] * obx + _HIP[leg][1] * oby          # + on the outward side
+                act[0, j] = -sg * (FLEX + LAUNCH_LEAN * w)
+        if phase == "FINISH" and t >= LAUNCH_AT and not META.get("launched"):
+            if on_bed and vz > VZ_UP:
+                META["launching"] = True
+            if META.get("launching") and not on_bed:
+                print(f"[gym] launched at t={t:.2f}s")
+                if LAUNCH_REPEAT:
+                    META["launching"] = False
+                else:
+                    META["launched"] = t
+            if META.get("launching") and on_bed:
+                # the outward direction (from the trampoline's centre to the base) in the body frame
+                q = robot.data.root_link_quat_w[0]
+                qw, qx, qy, qz = (float(v) for v in q)
+                yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+                bx_, by_ = float(robot.data.root_link_pos_w[0, 0]), float(robot.data.root_link_pos_w[0, 1])
+                ox_, oy_ = bx_ - _rb_cx, by_ - _rb_cy
+                nrm = math.hypot(ox_, oy_) or 1.0
+                ox_, oy_ = ox_ / nrm, oy_ / nrm
+                obx = math.cos(yaw) * ox_ + math.sin(yaw) * oy_
+                oby = -math.sin(yaw) * ox_ + math.cos(yaw) * oy_
+                lp = AMP * LAUNCH_GAIN
+                for leg, (j, sg) in KNEE_EXT.items():
+                    w = -(_HIP[leg][0] * obx + _HIP[leg][1] * oby)
+                    k_ = max(0.0, 1.0 + LAUNCH_TILT * w)
+                    act[0, j] = sg * lp * k_
+                    jt, st_ = THIGH_DOWN[leg]
+                    act[0, jt] = st_ * lp * k_ * THIGH
+                    if LAUNCH_ROW:
+                        hx, hy = _HIP[leg]
+                        act[0, _J0[leg]] = LAUNCH_ROW * (-hy * obx + hx * oby)
+        if phase == "FINISH" and FINISH_KILL > 0 and on_bed and vz > 0 and not META.get("launching"):
+            for leg, (j, s) in KNEE_EXT.items():
+                act[0, j] -= s * FINISH_KILL
+            for leg, (j, s) in THIGH_DOWN.items():
+                act[0, j] -= s * FINISH_KILL * FINISH_KILL_THIGH
         # ---- flight reflexes ----
         u_pitch = u_roll = u_yaw = 0.0
         if in_air and not landing_soon:
@@ -189,10 +256,20 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
                 for idx in (1, 5):
                     act[0, idx] = -3.0
                 act[0, 2] = +2.0; act[0, 6] = -2.0
+        if t >= WAVE_AFTER and (in_air or (phase in ("FINISH", "FLOOR") and WAVE_STAY)):
+            act[0, 5] = -3.0                                  # the right claw up for the whole flight
+            act[0, 6] = -2.0                                  # elbow straight
+        if phase == "FLOOR" and not in_air and t - t_phase >= FLOOR_HOLD:
+            act[0, 5] = -HELLO_LIFT; act[0, 6] = -2.0         # hello: the right claw up, elbow straight,
+            act[0, 4] = HELLO_AMP * math.sin(2 * math.pi * HELLO_HZ * (t - t_phase - FLOOR_HOLD))   # waved side to side
         if NOSE_WAVE == "landing" and in_air and landing_soon and float(robot.data.projected_gravity_b[0, 0]) > NOSE_WAVE_G:
             for idx in (1, 5):
                 act[0, idx] = -3.0
             act[0, 2] = +2.0; act[0, 6] = -2.0
+        if ROUND_BED and not META.get("dropped") and not on_bed and                 math.hypot(float(robot.data.root_link_pos_w[0, 0]) - _rb_cx, float(robot.data.root_link_pos_w[0, 1]) - _rb_cy) > _rb_r:
+            _drop_the_floor(unwrapped)
+            META["dropped"] = t
+            print(f"[gym] airborne outside the circle at t={t:.2f}s: the floor is now the landing mat (the stool)")
         with torch.inference_mode():
             obs, _, _, _ = env.step(act)
         fired = [n for n in terms if bool(tm.get_term(n)[0])]
@@ -256,6 +333,77 @@ def summary() -> None:
             w.writerow(["step", "t", "base_z", "vz", "foot_force_total", "phase", "push", "tilt_rate", "yaw_rate", "u_pitch", "u_roll", "u_yaw", "terminations", "base_x", "base_y"])
             w.writerows(ROWS)
         print(f"[gym] log -> {out_path}")
+
+
+# --round-bed R,CX,CY (the coach, 10/11: "飛び出した先は少し低い床に着地できるの？" "硬さは吸着" "着地する場所に
+# ふかふかの切り株スツールを 0 地点で"): the round trampoline's edge, made physical the simple way. The bed stays
+# the endless soft plane it always was, and the moment the crab is airborne with its base outside the circle of
+# radius R about (CX, CY), the plane's contact becomes a landing mat that gives nothing back: the feet's own
+# stiffness, over-damped (--floor-damp > 1) and a firm grip (--floor-friction). Its height stays 0: render_sim
+# draws the island's stump stool there (STOOL=x,y,r), top at the bed's level. Everything before that moment is
+# the take exactly. Tried and dropped (10/11): a cylinder of bed (its convex collision with the feet does not
+# sink like the plane; the crab barely bounced, 2-4 cm), and lowering the plane 0.25 m at the moment (the ground
+# is a static geom and its world position is not recomputed from geom_pos; it stayed at 0).
+ROUND_BED = opt("--round-bed", None, str)
+FLOOR_DAMP = opt("--floor-damp", 3.0)
+FLOOR_FRICTION = opt("--floor-friction", 2.0)
+# after landing on the gym floor: knees take it for --finish-hold, then stand and wave the raised right claw
+# side to side (front-right hip yaw J0) at --hello-hz with amplitude --hello-amp (action units)
+# --launch-at T (the coach, 10/11: "もっと遠くに吹っ飛べない？"): during the finish, the first bottom of the bed after
+# T gets one more push, --launch-gain x AMP, leaning outward: each leg pushes by (1 + --launch-tilt x w), w being how
+# far its hip points INTO the trampoline (away from where the crab should fly), so the bed throws it off the edge
+LAUNCH_AT = opt("--launch-at", float("inf"))
+LAUNCH_GAIN = opt("--launch-gain", 1.0)
+LAUNCH_TILT = opt("--launch-tilt", 1.0)
+# --launch-row U: also row with the hips while the feet are down: each leg's J0 by U x (its hip's tangent . the
+# outward direction), so every foot sweeps toward the trampoline's centre and the body slides out (same-sign J0 on
+# all legs turns the body; this sign pattern is meant to cancel the turn and keep the slide). Sign unknown: try +/-
+LAUNCH_ROW = opt("--launch-row", 0.0)
+LAUNCH_REPEAT = "--launch-repeat" in mine
+# --launch-lean L: the long jumper's way. While the bed is still taking the crab down before the launch (vz < 0),
+# legs on the outward side bend by L and those on the inward side stretch by L, so the body leans out; the push
+# then goes along the leaning body, through the centre of mass, instead of twisting it
+LAUNCH_LEAN = opt("--launch-lean", 0.0)   # every bottom of the bed after T, not only the first (a run-up)
+_J0 = {"LF": 0, "RF": 4, "LM": 8, "RM": 11, "LR": 14, "RR": 17}
+_HIP = {"LF": (0.7, 0.7), "RF": (0.7, -0.7), "LM": (0.0, 1.0), "RM": (0.0, -1.0), "LR": (-0.7, 0.7), "RR": (-0.7, -0.7)}
+FLOOR_HOLD = opt("--floor-hold", 0.8)    # s of bent knees after landing on the gym floor, before the hello
+HELLO_HZ = opt("--hello-hz", 1.5)
+HELLO_LIFT = opt("--hello-lift", 6.0)      # standing, the claw needs more than the -3 that raises it in flight
+HELLO_AMP = opt("--hello-amp", 1.5)
+_rb_r = _rb_cx = _rb_cy = _rb_h = 0.0
+if ROUND_BED:
+    _rb_r, _rb_cx, _rb_cy = (float(v) for v in ROUND_BED.split(",")[:3])
+
+
+def _drop_the_floor(unwrapped):
+    """Give the ground plane the landing mat's contact, in every model the sim steps."""
+    import mujoco as _mj
+    import re as _re
+    import scenes.registry as _reg
+    from tasks.jumper.common.constants import _CONTACT_SOLIMP, _CONTACT_SOLREF
+    sim = unwrapped.sim
+    models = [sim.mj_model] + list(getattr(sim, "_models", None) or [])
+    pats = [_re.compile(p_) for p_ in _reg.GROUND]
+    for m in models:
+        for gid in range(m.ngeom):
+            name = _mj.mj_id2name(m, _mj.mjtObj.mjOBJ_GEOM, gid) or ""
+            if any(p_.search(name) for p_ in pats):
+                m.geom_solref[gid] = [float(_CONTACT_SOLREF[0]), FLOOR_DAMP]
+                m.geom_solimp[gid] = list(_CONTACT_SOLIMP)
+                m.geom_friction[gid, 0] = FLOOR_FRICTION
+                print(f"[gym]   floor geom {name!r}: solref {m.geom_solref[gid].tolist()}, "
+                      f"friction {m.geom_friction[gid, 0]:g}")
+    # the native backend keeps the domain-randomised fields in per-environment buffers and writes them back into
+    # the models whenever they may have changed, so a field edited only in the models reverts: edit the buffers too
+    bufs = getattr(sim, "_expanded_buf", {}) or {}
+    m0 = sim.mj_model
+    for f in ("geom_solref", "geom_solimp", "geom_friction"):
+        if f in bufs:
+            bufs[f][:] = getattr(m0, f)
+    if hasattr(sim, "_model_dirty"):
+        sim._model_dirty = True
+    print(f"[gym]   sim {type(sim).__name__}, {len(models)} model(s); per-env buffers rewritten: "
+          f"{[f for f in ('geom_solref', 'geom_solimp', 'geom_friction') if f in bufs]}")
 
 
 SEED = opt("--seed", None, int)

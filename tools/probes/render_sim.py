@@ -191,8 +191,18 @@ def _add_round_trampoline(spec):
     cx, cy, R, H = ROUND_CX, ROUND_CY, ROUND_R, ROUND_HEIGHT
     n = 64
     pad_r = 0.05
+    # STOOL=x,y,r (the coach, 10/11): the island's stump stool, pushed against the frame where the crab lands after
+    # jumping off; the pad, ring and legs are left out where it stands
+    stool = [float(v) for v in os.environ["STOOL"].split(",")] if os.environ.get("STOOL") else None
+
+    def clear_of_stool(x, y, margin):
+        return stool is None or math.hypot(x - stool[0], y - stool[1]) > stool[2] + margin
+
     for i in range(n):
         a0, a1 = 2 * math.pi * i / n, 2 * math.pi * (i + 1) / n
+        am = 0.5 * (a0 + a1)
+        if not clear_of_stool(cx + (R + 0.04) * math.cos(am), cy + (R + 0.04) * math.sin(am), 0.07):
+            continue
         spec.worldbody.add_geom(
             name=f"tramp_pad_{i}", type=mujoco.mjtGeom.mjGEOM_CAPSULE,
             fromto=[cx + (R + pad_r * 0.6) * math.cos(a0), cy + (R + pad_r * 0.6) * math.sin(a0), DISH_LIFT + 0.01,
@@ -206,6 +216,8 @@ def _add_round_trampoline(spec):
     for k in range(6):
         a = 2 * math.pi * k / 6 + math.pi / 6
         x, y = cx + (R + 0.06) * math.cos(a), cy + (R + 0.06) * math.sin(a)
+        if not clear_of_stool(x, y, 0.05):
+            continue
         spec.worldbody.add_geom(
             name=f"tramp_leg_{k}", type=mujoco.mjtGeom.mjGEOM_CAPSULE,
             fromto=[x, y, -0.045, x * 1.0 + 0.04 * math.cos(a), y + 0.04 * math.sin(a), -H],
@@ -213,6 +225,11 @@ def _add_round_trampoline(spec):
     spec.worldbody.add_geom(
         name="gym_floor", type=mujoco.mjtGeom.mjGEOM_PLANE, pos=[cx, cy, -H], size=[10, 10, 0.1],
         rgba=[0.66, 0.50, 0.34, 1.0], contype=0, conaffinity=0)
+    if stool is not None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import stump_stool
+        stump_stool.add_stool(spec, stool[0], stool[1], stool[2], floor_z=-H, top_z=0.004)
+        print(f"[render] stump stool at ({stool[0]:+.2f}, {stool[1]:+.2f}), radius {stool[2]} m, top at the bed's level")
 
 
 def _dished_render_model(unwrapped, model):
@@ -266,6 +283,10 @@ def _dished_render_model(unwrapped, model):
 #: faces on the display module (the coach, 10/10: "練習中は真剣な目、回っているときはぐるぐる目、転んでいる
 #: ときは ><"). FACE=auto|neutral|serious|spiral|cross|happy; unset or 0 = the plain black panel.
 FACE = os.environ.get("FACE", "0")
+#: CAM_FOLLOW=180 keeps the camera on the crab's face (its front looks along +x at yaw 0, so azimuth = heading + 180);
+#: unset = the fixed azimuth as before. CAM_FOLLOW_TAU: seconds of simulation the camera takes to swing round
+CAM_FOLLOW = float(os.environ["CAM_FOLLOW"]) if os.environ.get("CAM_FOLLOW") else None
+CAM_FOLLOW_TAU = float(os.environ.get("CAM_FOLLOW_TAU", "0.8"))
 FACE_HAPPY_AFTER = float(os.environ.get("FACE_HAPPY_AFTER", "inf"))   # s of simulation: ^ ^ from then on
 _face = {}
 
@@ -464,6 +485,16 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
             lo, hi = state.setdefault("base_lo", list(bxy)), state.setdefault("base_hi", list(bxy))
             for i in (0, 1):
                 lo[i], hi[i] = min(lo[i], bxy[i]), max(hi[i], bxy[i])
+            if CAM_FOLLOW is not None:
+                # keep the camera in front of the crab: azimuth = heading + CAM_FOLLOW, low-passed over CAM_FOLLOW_TAU
+                qw, qx, qy, qz = (float(v) for v in data.xquat[base])
+                yaw = np.degrees(np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
+                target = yaw + CAM_FOLLOW
+                cur = state.setdefault("cam_az", target)
+                diff = (target - cur + 180.0) % 360.0 - 180.0
+                k = min(1.0, interval / max(CAM_FOLLOW_TAU, 1e-6))
+                state["cam_az"] = cur + k * diff
+                camera.azimuth = state["cam_az"]
             if face is not None:
                 t_sim = state["step"] * dt
                 if t_sim >= FACE_HAPPY_AFTER:
