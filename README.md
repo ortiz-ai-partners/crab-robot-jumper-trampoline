@@ -10,7 +10,7 @@ landing through the bed's compression, push from the bottom of the stroke, and
 go higher each time. Everything here is simulation for now. The robot is the
 prize.
 
-**Status (2026-10-10): stage 0 done; the scripted gymnast reaches 40.7 cm on the deep bed (three apexes over 30 cm in 12 s), but falls 5 times; the bed is now drawn as a round trampoline that sags to its frame; stage 1 written and launchable, not yet trained. Today's notes: [`docs/island_2026-10-10.md`](docs/island_2026-10-10.md).**
+**Status (2026-10-10): stage 0 done; the scripted gymnast reaches 40.7 cm on the deep bed (three apexes over 30 cm in 12 s), but falls 5 times, in a take shot with twice the default bed friction and the script's old mode that keeps pushing through a fall (on the default settings, 34.7 cm and 3 or 4 falls in 15 s); the bed is now drawn as a round trampoline that sags to its frame, a picture only, the physics unchanged; stage 1 written and launchable, not yet trained. Today's notes: [`docs/island_2026-10-10.md`](docs/island_2026-10-10.md).**
 
 | stage | what | state |
 |---|---|---|
