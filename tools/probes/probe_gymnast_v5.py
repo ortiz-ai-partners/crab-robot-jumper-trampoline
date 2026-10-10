@@ -113,6 +113,9 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
     print(f"[gym] amp {AMP} thigh x{THIGH} flex {FLEX} ramp {RAMP}s; arms {ARMS} at +{ARMS_DELAY}s for {ARMS_DUR}s; "
           f"R1 {'on' if R1 else 'off'} yaw {'on' if YAW else 'off'} wave {'on' if WAVE else 'off'}")
 
+    if FALL_LIMIT_DEG is not None and "fell_over" in terms:
+        tm.get_term_cfg("fell_over").params["limit_angle"] = math.radians(FALL_LIMIT_DEG)
+        print(f"[gym] fell_over limit {FALL_LIMIT_DEG:g} deg from the start")
     obs = env.get_observations()
     zero = policy(obs)
     phase = "STAND"
@@ -313,6 +316,41 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
                         jt, st_ = THIGH_DOWN[leg]
                         act[0, jt] = -st_ * AIR_FOLD                # the pushing (inward) legs fold at the root
                         act[0, j] = -sg * AIR_FOLD
+        if HAND_DELAY is not None:
+            hs = META.setdefault("hand", {"high": False, "t_land": None, "n": 0})
+            if in_air:
+                if hs["t_land"] is not None:                      # a new flight: judge it afresh
+                    hs["high"], hs["t_land"] = False, None
+                if z - STAND_Z > HAND_TRIGGER and not hs["high"]:
+                    hs["high"] = True
+                    if HAND_FREE_FALL and "fell_over" in terms:
+                        tm.get_term_cfg("fell_over").params["limit_angle"] = math.pi
+                        hs["free_until"] = None
+                if hs["high"]:
+                    for idx in (1, 5):
+                        act[0, idx] = -HAND_UP                    # claws up: the feet land first
+                    act[0, 2] = +2.0; act[0, 6] = -2.0
+            elif hs["high"]:
+                if hs["t_land"] is None:
+                    hs["t_land"] = t
+                    hs["n"] += 1
+                if t - hs["t_land"] < HAND_DELAY:
+                    for idx in (1, 5):
+                        act[0, idx] = -HAND_UP
+                    act[0, 2] = +2.0; act[0, 6] = -2.0
+                else:
+                    if HAND_FREE_FALL and hs.get("free_until") is None:
+                        hs["free_until"] = t + HAND_FREE_AFTER
+                    for idx in (1, 5):
+                        act[0, idx] = +HAND_DOWN                  # then the hands come down onto the bed
+                    act[0, 2] = +2.0; act[0, 6] = -2.0
+                    if not hs.get("logged_" + str(hs["n"])):
+                        hs["logged_" + str(hs["n"])] = True
+                        if hs["n"] <= 12:
+                            print(f"[gym] hands down at t={t:.2f}s ({HAND_DELAY:g} s after the feet)")
+        if HAND_FREE_FALL and META.get("hand", {}).get("free_until") is not None and t >= META["hand"]["free_until"]:
+            tm.get_term_cfg("fell_over").params["limit_angle"] = math.radians(50.0)
+            META["hand"]["free_until"] = None
         if META.get("launched") and in_air and LAUNCH_SWAP and AIR_FLIP:
             q = robot.data.root_link_quat_w[0]
             qw, qx, qy, qz = (float(v) for v in q)
@@ -355,7 +393,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
         w = robot.data.root_link_ang_vel_w[0]
         ROWS.append([step, round((step + 1) * dt, 4), z, vz, F, phase, push if phase == "UP" else 0.0,
                      float(torch.linalg.norm(w[:2])), float(w[2]), u_pitch, u_roll, u_yaw, ";".join(fired),
-                     float(robot.data.root_link_pos_w[0, 0]), float(robot.data.root_link_pos_w[0, 1])])
+                     float(robot.data.root_link_pos_w[0, 0]), float(robot.data.root_link_pos_w[0, 1]),
+                     float(robot.data.projected_gravity_b[0, 2])])
         if monitor is not None:
             monitor.update()
         step += 1
@@ -403,7 +442,7 @@ def summary() -> None:
     if out_path:
         with open(out_path, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
-            w.writerow(["step", "t", "base_z", "vz", "foot_force_total", "phase", "push", "tilt_rate", "yaw_rate", "u_pitch", "u_roll", "u_yaw", "terminations", "base_x", "base_y"])
+            w.writerow(["step", "t", "base_z", "vz", "foot_force_total", "phase", "push", "tilt_rate", "yaw_rate", "u_pitch", "u_roll", "u_yaw", "terminations", "base_x", "base_y", "gz"])
             w.writerows(ROWS)
         print(f"[gym] log -> {out_path}")
 
@@ -458,7 +497,22 @@ AIR_FLIP_BACK = opt("--air-flip-back", 0.08)
 # --no-fall-term: for a video take, from the launch on, the env's fell_over termination (50 deg of tilt, a training
 # rule that resets the robot to its start) no longer fires: its limit is raised to 180 deg at the launch. The physics
 # is unchanged and everything before the launch is the take exactly
-NO_FALL_TERM = "--no-fall-term" in mine   # every bottom of the bed after T, not only the first (a run-up)
+NO_FALL_TERM = "--no-fall-term" in mine
+# --fall-limit-deg D: fell_over's limit from the first step (180 = never; the coach, 10/11: "最初から180度にして、
+# どれだけ転倒してもいいから60秒回し続ける")
+FALL_LIMIT_DEG = opt("--fall-limit-deg", None)
+# --hand-delay DT (the coach: "足と手が0.2秒くらいの差で着く。足が先について、その0.2秒後に手がつく。高さが20センチを
+# 超えたあたりでそれが作動するように。そしたら後ろ宙返りができる気がする"): in a flight whose base rises more than
+# --hand-trigger-cm above standing, both claws stay up (front J1 lifted, elbows straight) until the feet touch, and
+# come down to the bed DT after the touchdown (front J1 down/forward by --hand-down), until the next takeoff
+HAND_DELAY = opt("--hand-delay", None)
+HAND_TRIGGER = opt("--hand-trigger-cm", 20.0) / 100.0
+HAND_UP = opt("--hand-up", 3.0)
+HAND_DOWN = opt("--hand-down", 3.0)
+# --hand-free-fall: fell_over's limit is 180 deg only while the hand move runs (from the 20 cm trigger until
+# --hand-free-after s after the hands come down), so a back somersault is not cut short; outside it, the usual 50
+HAND_FREE_FALL = "--hand-free-fall" in mine
+HAND_FREE_AFTER = opt("--hand-free-after", 0.8)   # every bottom of the bed after T, not only the first (a run-up)
 _J0 = {"LF": 0, "RF": 4, "LM": 8, "RM": 11, "LR": 14, "RR": 17}
 _HIP = {"LF": (0.7, 0.7), "RF": (0.7, -0.7), "LM": (0.0, 1.0), "RM": (0.0, -1.0), "LR": (-0.7, 0.7), "RR": (-0.7, -0.7)}
 FLOOR_HOLD = opt("--floor-hold", 0.8)    # s of bent knees after landing on the gym floor, before the hello
