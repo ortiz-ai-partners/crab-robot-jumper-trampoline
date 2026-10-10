@@ -14,7 +14,7 @@ import csv
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 STAND_Z = 0.09423387151092881  # ref clip meta: stand_base_z
 
 # ── split our own args from play.py's ──

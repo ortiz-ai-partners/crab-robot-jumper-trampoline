@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 LIFT = {"LF": (1, -1.0), "RF": (5, -1.0), "LM": (9, +1.0), "RM": (12, -1.0), "LR": (15, +1.0), "RR": (18, -1.0)}
 GROUPS = {"front": ("LF", "RF"), "rear": ("LR", "RR"), "left": ("LF", "LM", "LR"), "right": ("RF", "RM", "RR"),
           "mid": ("LM", "RM"), "none": (), "yaw_mirror": ("LF", "RF", "LM", "RM", "LR", "RR"),

@@ -22,7 +22,7 @@ import math
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 STAND_Z = 0.09423387151092881
 NEUTRAL_HEIGHT = 0.10647          # tasks/jumper/posture: the standing height the command is centred on
 HEIGHT_RANGE = (0.07, 0.15)       # the command's own range
@@ -174,7 +174,7 @@ if RENDER:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import render_sim
     render_sim.install(play, RENDER, fps=int(opt("--fps", 30, int)),
-                       cam=CAM or (1.2, -18.0, 135.0), mask="--no-mask" not in mine)
+                       cam=CAM or (1.2, -18.0, 135.0), mask="--no-mask" not in mine, slow=opt("--slow", 1.0))
 sys.argv = [os.path.join(REPO, "scripts", "play.py"), *theirs]
 try:
     play.main()

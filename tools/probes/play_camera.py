@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 DIST = float(os.environ.get("REC_CAM_DISTANCE", "1.2"))
 ELEV = float(os.environ.get("REC_CAM_ELEVATION", "-18"))
 AZIM = float(os.environ.get("REC_CAM_AZIMUTH", "135"))

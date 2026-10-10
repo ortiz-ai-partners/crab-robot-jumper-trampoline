@@ -18,7 +18,7 @@ import math
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 STAND_Z = 0.09423387151092881
 # action indices: LF 0-3, RF 4-7, LM 8-10, RM 11-13, LR 14-16, RR 17-19 (J0, J1, J2[, J3])
 # "extend" (stand taller) signs, from the stance angles (knee J2 flexed: LM -1.83, RM +1.83 ...):

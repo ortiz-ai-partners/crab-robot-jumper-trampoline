@@ -29,7 +29,7 @@ import math
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 STAND_Z = 0.09423387151092881
 NEUTRAL_HEIGHT = 0.10647
 HEIGHT_RANGE = (0.07, 0.15)
@@ -243,7 +243,7 @@ play._loop = _loop
 if RENDER:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import render_sim
-    render_sim.install(play, RENDER, cam=CAM, mask="--no-mask" not in mine)
+    render_sim.install(play, RENDER, cam=CAM, mask="--no-mask" not in mine, slow=opt("--slow", 1.0))
 
 
 def summary() -> None:

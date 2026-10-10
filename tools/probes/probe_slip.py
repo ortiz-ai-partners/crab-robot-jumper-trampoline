@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 STAND_Z = 0.09423387151092881
 CONTACT_Z = 0.03          # a tip below this is "on the bed" (tips sink below 0 on a soft bed)
 # The front legs walk on the rear palm pad (constants.TIP_LINKS comment), the others on the toe tip.

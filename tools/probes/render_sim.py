@@ -16,7 +16,8 @@ Works two ways:
 How a frame is made (the live viewer's recipe, rl/mjrl/viewer/live.py): the native
 backend keeps a `render_model` with the appearance meshes; environment 0's qpos/qvel
 are copied into an MjData of that model, `mj_forward`, then `mujoco.Renderer` draws
-it with a tracking camera locked on the robot's base. The mask comes from the same
+it with a tracking camera locked on the robot's base. With FACE set, the display module shows
+a face that follows the simulation (see face_display.py). The mask comes from the same
 renderer in segmentation mode: every geom whose body belongs to the robot's kinematic
 tree is the robot.
 """
@@ -25,7 +26,7 @@ from __future__ import annotations
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 
 
 #: The visual bed ("床のテクスチャも沈み込むように", the coach, 10/9 23:40): a height field drawn in place
@@ -251,6 +252,7 @@ def _dished_render_model(unwrapped, model):
         g.material = "bed_net"
     if ROUND_R > 0:
         _add_round_trampoline(spec)
+    _add_face(spec)
     m2 = spec.compile()
     hid = mujoco.mj_name2id(m2, mujoco.mjtObj.mjOBJ_HFIELD, "bed_dish")
     gid = mujoco.mj_name2id(m2, mujoco.mjtObj.mjOBJ_GEOM, "bed_dish_geom")
@@ -261,12 +263,39 @@ def _dished_render_model(unwrapped, model):
     return m2, hid, gid, plane
 
 
+#: faces on the display module (the coach, 10/10: "練習中は真剣な目、回っているときはぐるぐる目、転んでいる
+#: ときは ><"). FACE=auto|neutral|serious|spiral|cross|happy; unset or 0 = the plain black panel.
+FACE = os.environ.get("FACE", "0")
+FACE_HAPPY_AFTER = float(os.environ.get("FACE_HAPPY_AFTER", "inf"))   # s of simulation: ^ ^ from then on
+_face = {}
+
+
+def _add_face(spec):
+    if FACE in ("", "0"):
+        return
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import face_display
+    _face["geom"], _face["mats"] = face_display.add_screen(spec)
+
+
+def _faced_render_model(unwrapped):
+    """The scene's render model with only the face added (no dished bed)."""
+    spec = getattr(unwrapped.scene, "spec", None)
+    if spec is None or FACE in ("", "0"):
+        return None
+    _add_face(spec)
+    return spec.compile()
+
+
 def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 135.0), mask=True, slow=1.0, dish=True):
     """`slow` > 1 renders slow motion: frames are taken every 1/(fps*slow) s of simulation and
     played back at `fps`, so slow=3 shows the motion at one third speed (the coach's request,
     10/9: easier to read the movement and the direction of the kinetic energy).
     `dish` draws the bed as a height field that sinks under the feet (see DISH_*)."""
     inner_loop = play._loop
+    # RENDER_SIZE=270x480 for a quick look (the face's log and the take's timing are the same at any size)
+    if os.environ.get("RENDER_SIZE"):
+        width, height = (int(v) for v in os.environ["RENDER_SIZE"].lower().split("x"))
     # RENDER_DISH=0 draws the plain scene floor, as before the net bed existed (for reproducing older clips)
     dish = dish and os.environ.get("RENDER_DISH", "1") != "0"
 
@@ -284,6 +313,18 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
             print(f"[render] bed drawn as a height field that dishes under the feet (depth up to {DISH_DEPTH} m)")
         elif dish:
             print("[render] no MjSpec on the scene; the bed stays a flat plane")
+        else:
+            faced = _faced_render_model(unwrapped)
+            if faced is not None:
+                model = faced
+        face = None
+        if _face:
+            import face_display
+            face = face_display.FaceDriver(model, _face["geom"], _face["mats"],
+                                           mode=FACE if FACE != "1" else "auto")
+            print(f"[render] face on the display: {face.mode}"
+                  f"{f', base {face.base}' if face.mode == 'auto' else ''}"
+                  f"{f', ^ ^ from t={FACE_HAPPY_AFTER:g} s' if FACE_HAPPY_AFTER < float('inf') else ''}")
         model.vis.global_.offwidth = max(int(model.vis.global_.offwidth), width)
         model.vis.global_.offheight = max(int(model.vis.global_.offheight), height)
         data = mujoco.MjData(model)
@@ -418,6 +459,11 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
             data.qpos[:] = q.detach().cpu().numpy() if hasattr(q, "detach") else np.asarray(q)
             data.qvel[:] = v.detach().cpu().numpy() if hasattr(v, "detach") else np.asarray(v)
             mujoco.mj_forward(model, data)
+            if face is not None:
+                t_sim = state["step"] * dt
+                if t_sim >= FACE_HAPPY_AFTER:
+                    face.mode = "happy"
+                face(data, t_sim, base)
             if dished is not None:
                 dish_the_bed()
             rgb.update_scene(data, camera=camera)
@@ -454,6 +500,10 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
                 mask_writer.close()
             print(f"\n[render] {state['frames']} frames = {state['frames'] / fps:.2f} s of video for "
                   f"{state['step'] * dt:.2f} s of simulation ({state['step']} control steps) -> {out_path}")
+            if face is not None:
+                print("[render] face: " + ", ".join(f"{t:.2f}s {e}" for t, e in face.log)
+                      + f"  (video time = simulation time x {max(slow, 1e-6):g}); "
+                      f"fastest steady turn {face.state.get('peak', 0.0):.2f} rad/s")
             if dished is not None:
                 print(f"[render] dish: deepest {state.get('dish_max', 0.0) * 100:.1f} cm at frame {state.get('dish_frame')} "
                       f"(video t={state.get('dish_frame', 0) / fps:.2f} s), world xy {state.get('dish_at')}; drawn deeper than 5 mm in "

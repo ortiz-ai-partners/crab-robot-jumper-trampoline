@@ -16,7 +16,7 @@ import math
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 FOOT_OF = {"LF": "LF_palm_pad_b_link", "RF": "RF_palm_pad_b_link", "LM": "LM_foot_tip_link",
            "RM": "RM_foot_tip_link", "LR": "LR_foot_tip_link", "RR": "RR_foot_tip_link"}
 JOINTS = ["LF_J0_joint", "LF_J1_joint", "LF_J2_joint", "LF_J3_joint", "RF_J0_joint", "RF_J1_joint",

@@ -29,7 +29,7 @@ import math
 import os
 import sys
 
-REPO = r"D:\IslandMaster\jumper"
+REPO = os.environ.get("JUMPER_REPO", r"D:\IslandMaster\jumper")  # the jumper checkout this overlay is installed in
 STAND_Z = 0.09423387151092881
 # action indices: LF 0-3, RF 4-7, LM 8-10, RM 11-13, LR 14-16, RR 17-19
 KNEE_EXT = {"LF": (2, +1.0), "RF": (6, -1.0), "LM": (10, +1.0), "RM": (13, -1.0), "LR": (16, +1.0), "RR": (19, -1.0)}
