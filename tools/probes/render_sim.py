@@ -459,6 +459,11 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
             data.qpos[:] = q.detach().cpu().numpy() if hasattr(q, "detach") else np.asarray(q)
             data.qvel[:] = v.detach().cpu().numpy() if hasattr(v, "detach") else np.asarray(v)
             mujoco.mj_forward(model, data)
+            # where the base wanders, so a round trampoline can be fitted to the take (island, 10/11)
+            bxy = (float(data.xpos[base, 0]), float(data.xpos[base, 1]))
+            lo, hi = state.setdefault("base_lo", list(bxy)), state.setdefault("base_hi", list(bxy))
+            for i in (0, 1):
+                lo[i], hi[i] = min(lo[i], bxy[i]), max(hi[i], bxy[i])
             if face is not None:
                 t_sim = state["step"] * dt
                 if t_sim >= FACE_HAPPY_AFTER:
@@ -500,6 +505,9 @@ def install(play, out_path, fps=30, width=1080, height=1920, cam=(1.2, -18.0, 13
                 mask_writer.close()
             print(f"\n[render] {state['frames']} frames = {state['frames'] / fps:.2f} s of video for "
                   f"{state['step'] * dt:.2f} s of simulation ({state['step']} control steps) -> {out_path}")
+            if "base_lo" in state:
+                lo, hi = state["base_lo"], state["base_hi"]
+                print(f"[render] base x {lo[0]:+.2f}..{hi[0]:+.2f} m, y {lo[1]:+.2f}..{hi[1]:+.2f} m")
             if face is not None:
                 print("[render] face: " + ", ".join(f"{t:.2f}s {e}" for t, e in face.log)
                       + f"  (video time = simulation time x {max(slow, 1e-6):g}); "
