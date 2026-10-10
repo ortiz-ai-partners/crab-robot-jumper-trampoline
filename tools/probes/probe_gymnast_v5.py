@@ -181,6 +181,39 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
         elif phase == "DOWN" or (phase == "FINISH" and t - t_phase < FINISH_HOLD) or                 (phase == "FLOOR" and t - t_phase < FLOOR_HOLD):
             for leg, (j, s) in KNEE_EXT.items():
                 act[0, j] -= s * FLEX                         # knees bent, held (stiff by the PD)
+        if phase == "FINISH" and LAUNCH_SWAP and t >= LAUNCH_AT - 0.25 and not META.get("launched"):
+            q = robot.data.root_link_quat_w[0]
+            qw, qx, qy, qz = (float(v) for v in q)
+            yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+            ox_ = float(robot.data.root_link_pos_w[0, 0]) - _rb_cx; oy_ = float(robot.data.root_link_pos_w[0, 1]) - _rb_cy
+            nrm = math.hypot(ox_, oy_) or 1.0
+            obx = (math.cos(yaw) * ox_ + math.sin(yaw) * oy_) / nrm
+            oby = (-math.sin(yaw) * ox_ + math.cos(yaw) * oy_) / nrm
+            pushing = t >= LAUNCH_AT and on_bed and (META.get("swap_push") or vz > VZ_UP)
+            if pushing:
+                META["swap_push"] = True
+            if META.get("swap_push") and not on_bed:
+                META["launched"] = t
+                print(f"[gym] swap launch at t={t:.2f}s")
+                if NO_FALL_TERM and "fell_over" in terms:
+                    tm.get_term_cfg("fell_over").params["limit_angle"] = math.pi
+                    print("[gym]   fell_over limit raised to 180 deg from here (video take)")
+            elif on_bed:
+                lp = AMP * LAUNCH_GAIN
+                for leg, (j, sg) in KNEE_EXT.items():
+                    w = _HIP[leg][0] * obx + _HIP[leg][1] * oby          # + outward side, - inward side
+                    jt, st_ = THIGH_DOWN[leg]
+                    if META.get("swap_push"):
+                        # outward legs fold, inward legs drive
+                        u = lp * max(0.0, -w) - LAUNCH_SWAP * max(0.0, w)
+                        act[0, j] = sg * u
+                        act[0, jt] = st_ * u * THIGH
+                        if LAUNCH_ROW:
+                            hx, hy = _HIP[leg]
+                            act[0, _J0[leg]] = LAUNCH_ROW * (-hy * obx + hx * oby)
+                    elif vz <= VZ_UP:
+                        # on the way down: outward legs stretched, inward legs bent
+                        act[0, j] = sg * (-FLEX + LAUNCH_SWAP * w)
         if phase == "FINISH" and LAUNCH_LEAN and t >= LAUNCH_AT - 0.25 and not META.get("launched")                 and not META.get("launching") and on_bed and vz <= VZ_UP:
             q = robot.data.root_link_quat_w[0]
             qw, qx, qy, qz = (float(v) for v in q)
@@ -192,7 +225,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
             for leg, (j, sg) in KNEE_EXT.items():
                 w = _HIP[leg][0] * obx + _HIP[leg][1] * oby          # + on the outward side
                 act[0, j] = -sg * (FLEX + LAUNCH_LEAN * w)
-        if phase == "FINISH" and t >= LAUNCH_AT and not META.get("launched"):
+        if phase == "FINISH" and t >= LAUNCH_AT and not META.get("launched") and not LAUNCH_SWAP:
             if on_bed and vz > VZ_UP:
                 META["launching"] = True
             if META.get("launching") and not on_bed:
@@ -222,7 +255,7 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
                     if LAUNCH_ROW:
                         hx, hy = _HIP[leg]
                         act[0, _J0[leg]] = LAUNCH_ROW * (-hy * obx + hx * oby)
-        if phase == "FINISH" and FINISH_KILL > 0 and on_bed and vz > 0 and not META.get("launching"):
+        if phase == "FINISH" and FINISH_KILL > 0 and on_bed and vz > 0 and not META.get("launching")                 and not (LAUNCH_SWAP and t >= LAUNCH_AT - 0.25 and not META.get("launched")):
             for leg, (j, s) in KNEE_EXT.items():
                 act[0, j] -= s * FINISH_KILL
             for leg, (j, s) in THIGH_DOWN.items():
@@ -256,6 +289,46 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
                 for idx in (1, 5):
                     act[0, idx] = -3.0
                 act[0, 2] = +2.0; act[0, 6] = -2.0
+        if META.get("launched") and in_air and LAUNCH_SWAP and (AIR_SPREAD or AIR_FOLD):
+            g = robot.data.projected_gravity_b[0]
+            gx_, gy_ = float(g[0]), float(g[1])
+            tilt = math.degrees(math.asin(min(1.0, math.hypot(gx_, gy_))))
+            if tilt > AIR_TILT_DEG:
+                lx_, ly_ = gx_ / (math.hypot(gx_, gy_) or 1.0), gy_ / (math.hypot(gx_, gy_) or 1.0)   # toward the low side
+                q = robot.data.root_link_quat_w[0]
+                qw, qx, qy, qz = (float(v) for v in q)
+                yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+                ox_ = float(robot.data.root_link_pos_w[0, 0]) - _rb_cx; oy_ = float(robot.data.root_link_pos_w[0, 1]) - _rb_cy
+                nrm = math.hypot(ox_, oy_) or 1.0
+                obx = (math.cos(yaw) * ox_ + math.sin(yaw) * oy_) / nrm
+                oby = (-math.sin(yaw) * ox_ + math.cos(yaw) * oy_) / nrm
+                for leg, (j, sg) in KNEE_EXT.items():
+                    hx, hy = _HIP[leg]
+                    w_low = hx * lx_ + hy * ly_
+                    if AIR_SPREAD and w_low > 0:
+                        li, ls = LIFT[leg]
+                        act[0, li] = ls * AIR_SPREAD * w_low        # up from the root: the low side opens like a hand
+                        act[0, j] = sg * AIR_SPREAD * w_low         # and straight
+                    if AIR_FOLD and tilt > AIR_FOLD_DEG and (hx * obx + hy * oby) < 0:
+                        jt, st_ = THIGH_DOWN[leg]
+                        act[0, jt] = -st_ * AIR_FOLD                # the pushing (inward) legs fold at the root
+                        act[0, j] = -sg * AIR_FOLD
+        if META.get("launched") and in_air and LAUNCH_SWAP and AIR_FLIP:
+            q = robot.data.root_link_quat_w[0]
+            qw, qx, qy, qz = (float(v) for v in q)
+            yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+            ox_ = float(robot.data.root_link_pos_w[0, 0]) - _rb_cx; oy_ = float(robot.data.root_link_pos_w[0, 1]) - _rb_cy
+            nrm = math.hypot(ox_, oy_) or 1.0
+            obx = (math.cos(yaw) * ox_ + math.sin(yaw) * oy_) / nrm
+            oby = (-math.sin(yaw) * ox_ + math.cos(yaw) * oy_) / nrm
+            since = t - META["launched"]
+            for leg, (j, sg) in KNEE_EXT.items():
+                hx, hy = _HIP[leg]
+                if (hx * obx + hy * oby) < 0:                     # the legs that pushed (inward side)
+                    jt, st_ = THIGH_DOWN[leg]
+                    u = -0.5 * AIR_FLIP if since < AIR_FLIP_BACK else AIR_FLIP
+                    act[0, jt] = st_ * u
+                    act[0, j] = sg * u
         if t >= WAVE_AFTER and (in_air or (phase in ("FINISH", "FLOOR") and WAVE_STAY)):
             act[0, 5] = -3.0                                  # the right claw up for the whole flight
             act[0, 6] = -2.0                                  # elbow straight
@@ -363,7 +436,29 @@ LAUNCH_REPEAT = "--launch-repeat" in mine
 # --launch-lean L: the long jumper's way. While the bed is still taking the crab down before the launch (vz < 0),
 # legs on the outward side bend by L and those on the inward side stretch by L, so the body leans out; the push
 # then goes along the leaning body, through the centre of mass, instead of twisting it
-LAUNCH_LEAN = opt("--launch-lean", 0.0)   # every bottom of the bed after T, not only the first (a run-up)
+LAUNCH_LEAN = opt("--launch-lean", 0.0)
+# --launch-swap S (the coach, 10/11: "着地の時に移動したい方向の足を伸ばして反対の足を曲げる。跳ねるときに、伸ばした足を
+# 縮めて、曲げた足を伸ばす"): on the bed's way down before the launch, the legs on the outward side stretch by S and
+# the inward ones bend by S (the body tips in, loading the inward legs); at the push the roles swap: the outward
+# legs fold by S and the inward ones extend with the launch push (gain x AMP), throwing the body outward
+LAUNCH_SWAP = opt("--launch-swap", 0.0)
+# after the swap launch, in the air (the coach: "空中で斜めになったら、下がった足を広げる。進行方向の足をパッと広げて、
+# 空中でパーになる。それでも戻らなければ、ジャンプの時に伸ばした足を根元から縮める"):
+#   --air-spread P : legs on the low side lift from the root and straighten, by P x how far they point down-tilt
+#   --air-fold F   : once the tilt passes --air-fold-deg, the legs that drove the push (inward side) fold at the root
+AIR_SPREAD = opt("--air-spread", 0.0)
+AIR_FOLD = opt("--air-fold", 0.0)
+AIR_FOLD_DEG = opt("--air-fold-deg", 20.0)
+AIR_TILT_DEG = opt("--air-tilt-deg", 5.0)
+# --air-flip F (the coach: "それでも治らなければさらに回転して宙返り。飛び出したときに曲がってる足はそのまま、伸ばしてる足を
+# 半分ぐらい上げ戻して、全速力でもう一回開く"): after the swap launch, the legs that drove the push (inward side)
+# fold back half way at the root for --air-flip-back s, then open again as fast as they can (F action units)
+AIR_FLIP = opt("--air-flip", 0.0)
+AIR_FLIP_BACK = opt("--air-flip-back", 0.08)
+# --no-fall-term: for a video take, from the launch on, the env's fell_over termination (50 deg of tilt, a training
+# rule that resets the robot to its start) no longer fires: its limit is raised to 180 deg at the launch. The physics
+# is unchanged and everything before the launch is the take exactly
+NO_FALL_TERM = "--no-fall-term" in mine   # every bottom of the bed after T, not only the first (a run-up)
 _J0 = {"LF": 0, "RF": 4, "LM": 8, "RM": 11, "LR": 14, "RR": 17}
 _HIP = {"LF": (0.7, 0.7), "RF": (0.7, -0.7), "LM": (0.0, 1.0), "RM": (0.0, -1.0), "LR": (-0.7, 0.7), "RR": (-0.7, -0.7)}
 FLOOR_HOLD = opt("--floor-hold", 0.8)    # s of bent knees after landing on the gym floor, before the hello
