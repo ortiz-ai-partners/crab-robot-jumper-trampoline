@@ -423,7 +423,8 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
         ROWS.append([step, round((step + 1) * dt, 4), z, vz, F, phase, push if phase == "UP" else 0.0,
                      float(torch.linalg.norm(w[:2])), float(w[2]), u_pitch, u_roll, u_yaw, ";".join(fired),
                      float(robot.data.root_link_pos_w[0, 0]), float(robot.data.root_link_pos_w[0, 1]),
-                     float(robot.data.projected_gravity_b[0, 2])])
+                     float(robot.data.projected_gravity_b[0, 2]), float(robot.data.projected_gravity_b[0, 0]),
+                     float(robot.data.projected_gravity_b[0, 1])])
         if monitor is not None:
             monitor.update()
         step += 1
@@ -471,7 +472,7 @@ def summary() -> None:
     if out_path:
         with open(out_path, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
-            w.writerow(["step", "t", "base_z", "vz", "foot_force_total", "phase", "push", "tilt_rate", "yaw_rate", "u_pitch", "u_roll", "u_yaw", "terminations", "base_x", "base_y", "gz"])
+            w.writerow(["step", "t", "base_z", "vz", "foot_force_total", "phase", "push", "tilt_rate", "yaw_rate", "u_pitch", "u_roll", "u_yaw", "terminations", "base_x", "base_y", "gz", "gx", "gy"])
             w.writerows(ROWS)
         print(f"[gym] log -> {out_path}")
 
