@@ -377,6 +377,35 @@ def _loop(env, policy, viewer, max_steps, speed=1.0, readout=play._speed_text, m
             for idx in (1, 5):
                 act[0, idx] = -3.0
             act[0, 2] = +2.0; act[0, 6] = -2.0
+        if RIGHT is not None:
+            gz_ = float(robot.data.projected_gravity_b[0, 2])
+            rs = META.setdefault("right", {"prev_vz": 0.0, "t_bottom": None, "n": 0})
+            if gz_ < -0.7:
+                rs["k"] = 0                                         # upright again: the next fall starts afresh
+            if gz_ > RIGHT_GZ:
+                if rs["prev_vz"] < 0.0 <= vz:                       # the bottom of a bounce on the back
+                    rs["t_bottom"] = t
+                    rs["n"] += 1
+                    rs["k"] = rs.get("k", 0) + 1                    # bottoms in this fall
+                    if rs["n"] <= 20:
+                        print(f"[gym] upside down, bottom at t={t:.2f}s: {RIGHT}")
+                since_b = None if rs["t_bottom"] is None else t - rs["t_bottom"]
+                for leg, (j, sg) in KNEE_EXT.items():
+                    jt, st_ = THIGH_DOWN[leg]
+                    li, ls = LIFT[leg]
+                    mode = RIGHT if RIGHT != "combo" else ("extend" if rs.get("k", 0) <= 2 else "curl")
+                    if mode == "extend":
+                        if since_b is not None and since_b < RIGHT_DUR:
+                            act[0, j] = sg * RIGHT_U                 # knee straight
+                            act[0, jt] = st_ * RIGHT_U               # the leg out along the underside's normal
+                        else:
+                            act[0, j] = -sg * RIGHT_U * 0.6          # folded again in the air
+                            act[0, li] = ls * RIGHT_U * 0.6
+                    elif mode == "curl":
+                        if since_b is not None:
+                            act[0, li] = ls * RIGHT_U                # thighs up toward the back: knees reach the mat
+                            act[0, j] = -sg * RIGHT_U
+            rs["prev_vz"] = vz
         if ROUND_BED and not META.get("dropped") and not on_bed and                 math.hypot(float(robot.data.root_link_pos_w[0, 0]) - _rb_cx, float(robot.data.root_link_pos_w[0, 1]) - _rb_cy) > _rb_r:
             _drop_the_floor(unwrapped)
             META["dropped"] = t
@@ -512,7 +541,19 @@ HAND_DOWN = opt("--hand-down", 3.0)
 # --hand-free-fall: fell_over's limit is 180 deg only while the hand move runs (from the 20 cm trigger until
 # --hand-free-after s after the hands come down), so a back somersault is not cut short; outside it, the usual 50
 HAND_FREE_FALL = "--hand-free-fall" in mine
-HAND_FREE_AFTER = opt("--hand-free-after", 0.8)   # every bottom of the bed after T, not only the first (a run-up)
+HAND_FREE_AFTER = opt("--hand-free-after", 0.8)
+# --right MODE (the coach, 10/11: "ひっくり返った時は最初の2バウンドが勝負。背中が沈みきった段階で全速力で背伸び（足を
+# 体から垂直に突き上げる）。空中でまた曲げて、1番沈みきったとこで背伸び。効果がなかったら、沈みきったとこで全部を曲げて
+# 足の関節がマットについたら多分成功"): while upside down (projected gravity z above --right-gz), at the bottom of
+# each bounce on the back (vertical velocity turning from down to up):
+#   extend : every leg straight and pointing away from the body's underside, at full effort (--right-u), for
+#            --right-dur s; folded again in the air
+#   combo  : the coach's order: extend at the first two bottoms of a fall, curl from the third on
+#   curl   : every leg folded hard (thighs lifted, knees bent) so the knees reach for the mat, held to the next bottom
+RIGHT = opt("--right", None, str)
+RIGHT_U = opt("--right-u", 6.0)
+RIGHT_DUR = opt("--right-dur", 0.15)
+RIGHT_GZ = opt("--right-gz", 0.3)   # every bottom of the bed after T, not only the first (a run-up)
 _J0 = {"LF": 0, "RF": 4, "LM": 8, "RM": 11, "LR": 14, "RR": 17}
 _HIP = {"LF": (0.7, 0.7), "RF": (0.7, -0.7), "LM": (0.0, 1.0), "RM": (0.0, -1.0), "LR": (-0.7, 0.7), "RR": (-0.7, -0.7)}
 FLOOR_HOLD = opt("--floor-hold", 0.8)    # s of bent knees after landing on the gym floor, before the hello
